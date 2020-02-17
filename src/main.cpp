@@ -41,6 +41,11 @@
 #include "object3d.h"
 #include "pose_estimator6d.h"
 
+#include <xslam/xslam_sdk.hpp>
+#include <xslam/xslam_geometry.hpp>
+#include <xslam/xslam_io.hpp>
+#include <future>
+
 using namespace std;
 using namespace cv;
 
@@ -78,21 +83,59 @@ cv::Mat drawResultOverlay(const vector<Object3D*>& objects, const cv::Mat& frame
     return result;
 }
 
+static cv::Mat s_grabbed_rgb_unprocessed;
+static cv::Mat s_rgb;
+static bool s_run = false;
+static std::future<void> s_future;
+
+void onRGB( xslam_rgb *rgb){
+    s_grabbed_rgb_unprocessed = cv::Mat( static_cast<int>(1.5*rgb->height), rgb->width, CV_8UC1, rgb->data );
+    cv::cvtColor( s_grabbed_rgb_unprocessed, s_rgb, cv::COLOR_YUV2BGR_I420 );
+}
+
+void try_start_camera(){
+    while( !xslam_camera_is_detected() && s_run ){
+        std::this_thread::sleep_for( std::chrono::milliseconds(2000) );
+    }
+    if( s_run ){
+        xslam_start_camera();
+    }
+}
+
+void xslam_stop_capture(){
+    s_run = false;
+    xslam_stop();
+    return;
+}
+
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
 
     // camera image size
     int width = 640;
-    int height = 512;
+    int height = 480;
     
     // near and far plane of the OpenGL view frustum
     float zNear = 10.0;
     float zFar = 10000.0;
     
     // camera instrinsics
-    Matx33f K = Matx33f(650.048, 0, 324.328, 0, 647.183, 257.323, 0, 0, 1);
-    Matx14f distCoeffs =  Matx14f(0.0, 0.0, 0.0, 0.0);
+    //    Matx33f K = Matx33f(650.048, 0, 324.328, 0, 647.183, 257.323, 0, 0, 1);
+    //    Matx14f distCoeffs =  Matx14f(0.0, 0.0, 0.0, 0.0);
+    //xVisio intrinsics
+    Matx33f K = Matx33f(442.115, 0, 318.838, 0, 442.115, 119.899, 0, 0, 1);
+    //    k1 = 0.119386,
+    //    k2 = -0.334424,
+    //    p1 = -0.00100931,
+    //    p2 = -0.00077402,
+    //    k3 = 0.219367
+    float distortion_coeff_data[5] = {0.119386,
+                                      -0.334424,
+                                      -0.00100931,
+                                      -0.00077402,
+                                      0.219367 };
+    Mat distCoeffs =  Mat(5,1,CV_32FC1, distortion_coeff_data);
     
     // distances for the pose detection template generation
     vector<float> distances = {200.0f, 400.0f, 600.0f};
@@ -115,12 +158,31 @@ int main(int argc, char *argv[])
     
     bool showHelp = true;
     
+    //set xVisio parameters and start grabbing rgb frames
+    if(xslam_has_rgb()){
+        xslam_set_rgb_resolution( xslam_rgb_resolution::RGB_640x480 );
+        xslam_rgb_callback( onRGB );
+    }
+    s_run = true;
+    s_future = std::async( std::launch::async, try_start_camera );
+
     Mat frame;
+    int key =-1;
+
     while(true)
     {
+        if(s_rgb.empty())
+            continue;
+
         // obtain an input image
-        frame = imread("data/frame.png");
-        
+        s_rgb.copyTo(frame);
+        std::cout << "new frame"<<std::endl;
+
+        // If the frame is empty, break immediately
+        if (frame.empty())
+            break;
+
+
         // the main pose uodate call
         poseEstimator->estimatePoses(frame, false, true);
         
@@ -143,7 +205,7 @@ int main(int argc, char *argv[])
         if(key == (int)'1')
         {
             poseEstimator->toggleTracking(frame, 0, false);
-            poseEstimator->estimatePoses(frame, false, false);
+            poseEstimator->estimatePoses(frame, true, false);
             timeout = 1;
             showHelp = !showHelp;
         }
@@ -165,6 +227,8 @@ int main(int argc, char *argv[])
     
     // clean up
     RenderingEngine::Instance()->destroy();
+
+    xslam_stop_capture();
     
     for(int i = 0; i < objects.size(); i++)
     {
