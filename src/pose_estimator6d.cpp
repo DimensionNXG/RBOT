@@ -44,7 +44,7 @@ bool sortTemplateView(std::pair<float, TemplateView*> a, std::pair<float, Templa
 }
 
 
-PoseEstimator6D::PoseEstimator6D(int width, int height, float zNear, float zFar, const cv::Matx33f &K, const cv::Matx14f &distCoeffs, vector<Object3D*> &objects)
+PoseEstimator6D::PoseEstimator6D(int width, int height, float zNear, float zFar, const cv::Matx33f &K, const cv::Mat &distCoeffs, vector<Object3D*> &objects)
 {
     renderingEngine = RenderingEngine::Instance();
     optimizationEngine = new OptimizationEngine(width, height);
